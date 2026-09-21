@@ -63,6 +63,7 @@ Photograph your medication labels → a vision model reads each label → DoseWi
 ## Status / TODO
 
 - [x] MVP verified end-to-end: sample pillbox scan → 4 meds read (high conf) → warfarin×ibuprofen MAJOR + NSAID×ACE moderate detected → schedule + explanations + questions
+- [x] Competitive pass vs Medisafe/MyTherapy/Apple Health/Drugs.com: added ingredient-level dup detection (Norco+Tylenol verified), .ics calendar reminders, today-checklist+streak, refill countdowns, caregiver copy, TTS read-aloud, privacy positioning
 - [x] lint/build clean, committed
 - [ ] Deploy live demo + ≤5min video + Devpost submission
-- Stretch: barcode/NDC scan, caregiver share link, refill reminders
+- Stretch: barcode/NDC scan (openFDA), med image thumbnails on wallet card

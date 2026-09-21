@@ -15,10 +15,26 @@ Built for **InfinityX Global Hackathon 2K26**.
 ```
 📷 photo labels → 👁 vision model reads them → ✅ you confirm the list
         → ⚠️ interaction alerts (rule-table, not hallucinated)
+        → 🧪 hidden-ingredient detection (Norco + Tylenol = double acetaminophen)
         → 🕐 daily schedule grid with the actual bottle photos
-        → 💊 plain-language "what is this for" per med (6+ languages)
-        → 🪪 printable wallet card + questions to ask your pharmacist
+        → ✅ today's-doses checklist + streaks (localStorage)
+        → 📅 .ics calendar export — reminders in any calendar app, no account
+        → 📦 refill countdowns from label quantity
+        → 💊 plain-language "what is this for" per med (6+ languages, 🔊 read-aloud)
+        → 📤 one-tap caregiver summary · 🪪 printable wallet card
 ```
+
+## vs. the incumbents
+
+| | DoseWise | Medisafe | MyTherapy | Apple Health | Drugs.com |
+|---|---|---|---|---|---|
+| Photo-first entry | ✅ VL reads labels | ✖ manual | ✖ manual | ~OCR (iOS only) | ✖ manual |
+| Interaction check | ✅ rule table + **ingredient-level** | basic | ✖ | US-only | ✅ but jargon |
+| Reminders | ✅ .ics → any calendar | ✅ app | ✅ app | ✅ app | ✖ |
+| Caregiver share | ✅ one-tap text, no account | Medfriend acct | acct | ✖ | ✖ |
+| Account required | **none** | yes | yes | Apple ID | — |
+| Price | free | paid >2 meds | free | iOS only | free |
+| Your health data | **never leaves device** | sold to pharma advertisers | EU/GDPR | Apple | — |
 
 ### Why the hybrid architecture matters
 
@@ -56,8 +72,11 @@ Regenerate labels: `python3 scripts/make-sample-labels.py`
 2. Confirm screen — watch the VL-extracted fields; edit a strength to show human-in-the-loop
 3. **Analyze** → 🔴 MAJOR alert: warfarin × ibuprofen (bleeding risk) + moderate NSAID × ACE note
 4. Schedule grid — warfarin lands in evening, simvastatin at bedtime, ibuprofen PRN; grapefruit warning on simvastatin
-5. Plain-language purposes (switch the language picker → re-analyze for Spanish/Chinese)
-6. **Print the wallet card** → PDF for Grandma's purse
+5. Check off a dose in **Today's doses**; hit **📅 Add reminders to calendar** → .ics imports anywhere
+6. Plain-language purposes (switch the language picker → re-analyze for Spanish/Chinese, press 🔊 to hear it)
+7. **Print the wallet card** → PDF for Grandma's purse
+
+Extra demo punch: manually add **Norco** + **Tylenol** to the list → watch the hidden-acetaminophen double-dose fire.
 
 ## Safety & privacy
 

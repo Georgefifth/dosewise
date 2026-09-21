@@ -42,7 +42,18 @@ export async function POST(req: Request) {
           return mockScan(id, i, sample);
         }
         try {
-          return await scanLabelImage(Buffer.from(img.bytes).toString("base64"), img.mime, id, i);
+          const b64 = Buffer.from(img.bytes).toString("base64");
+          const first = await scanLabelImage(b64, img.mime, id, i);
+          // upstream flakes happen — one nudge retry when the drug name came back empty
+          if (!first.generic.trim()) {
+            try {
+              const retry = await scanLabelImage(b64, img.mime, id, i, true);
+              return retry.generic.trim() ? retry : first;
+            } catch {
+              return first;
+            }
+          }
+          return first;
         } catch {
           return {
             id, image: i, generic: "", confidence: "low",

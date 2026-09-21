@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ScanPanel, { ScanImage } from "@/components/ScanPanel";
 import MedListEditor from "@/components/MedListEditor";
 import InteractionAlerts from "@/components/InteractionAlerts";
@@ -30,9 +30,13 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [copied, setCopied] = useState(false);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
-  const [savedList] = useState<MedInput[]>(() =>
-    typeof window === "undefined" ? [] : loadMeds(),
-  );
+  const [savedList, setSavedList] = useState<MedInput[]>([]);
+
+  // re-read the saved list whenever we return to landing (post-mount → no
+  // hydration mismatch)
+  useEffect(() => {
+    if (phase === "landing") setSavedList(loadMeds());
+  }, [phase]);
 
   const previews = useMemo(() => images.map((i) => i.url), [images]);
 

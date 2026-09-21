@@ -143,13 +143,19 @@ export async function scanLabelImage(
   mime: string,
   id: string,
   imageIdx: number,
+  nudge = false,
 ): Promise<ScannedMed> {
   const raw = await chat(VL_MODELS(), [
     { role: "system", content: SCAN_SYSTEM },
     {
       role: "user",
       content: [
-        { type: "text", text: "Extract this medication label." },
+        {
+          type: "text",
+          text: nudge
+            ? "Look again carefully — the largest bold text on the label is the drug name. Extract this medication label."
+            : "Extract this medication label.",
+        },
         { type: "image_url", image_url: { url: `data:${mime};base64,${imageB64}` } },
       ],
     },
