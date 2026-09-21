@@ -4,6 +4,10 @@
 
 Built for **InfinityX Global Hackathon 2K26**.
 
+- **Live demo:** https://georgefifth.github.io/dosewise/ (static build — samples work out of the box; paste a BYOK key in ⚙ settings for live label reading)
+- **Demo video:** [`demo/demo.mp4`](demo/demo.mp4) (~75s, narrated + captioned)
+- **Full-stack dev:** `pnpm dev` uses `/api/*` routes + server-held keys from `.env.local`
+
 ## The problem
 
 - **~1.5M** people are harmed by medication errors every year in the US alone
@@ -63,6 +67,10 @@ Works with **no keys** (demo mode: canned scans + full rule engine). For live vi
 ```bash
 cp .env.example .env.local   # set LLM_BASE_URL / LLM_API_KEY / VL_MODEL / LLM_MODEL
 ```
+
+E2E regression: `pnpm tsx scripts/e2e.ts` (Playwright, 24 checks, works against dev server or static build via `BASE_URL=`).
+
+Deploy: push to `main` → `.github/workflows/deploy.yml` builds the static export (`GH_PAGES=1`, API routes parked for that build) → GitHub Pages.
 
 Regenerate labels: `python3 scripts/make-sample-labels.py`
 
