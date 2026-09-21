@@ -11,8 +11,18 @@ import { LANGS } from "@/lib/i18n";
 import { downloadIcs } from "@/lib/ics";
 import { speak, stopSpeaking } from "@/lib/speech";
 import { clearMeds, loadMeds, saveMeds } from "@/lib/store";
+import {
+  analyzeBrowser,
+  getByok,
+  saveByok,
+  scanImageBrowser,
+  type ByokConfig,
+} from "@/lib/client-ai";
 import type { Analysis, MedInput, ScannedMed } from "@/lib/schema";
 import { SAMPLE_LABELS, SAMPLES } from "@/lib/samples";
+
+/* static (GitHub Pages) builds have no /api/* — run scan+analysis in-browser */
+const IS_STATIC = process.env.NEXT_PUBLIC_STATIC === "1";
 
 type Phase = "landing" | "scanning" | "confirm" | "analyzing" | "results";
 
@@ -30,6 +40,7 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [copied, setCopied] = useState(false);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const [showByok, setShowByok] = useState(false);
   const [savedList, setSavedList] = useState<MedInput[]>([]);
 
   // re-read the saved list whenever we return to landing (post-mount → no
@@ -60,6 +71,16 @@ export default function Home() {
     setError(null);
     setPhase("scanning");
     try {
+      if (IS_STATIC) {
+        const out = await Promise.all(
+          list.map((img, i) => scanImageBrowser(img.sample, img.file, `m${i}`, i)),
+        );
+        setScanSource(getByok() ? "ai" : "offline");
+        setMeds(out);
+        if (imgs) setImages(imgs);
+        setPhase("confirm");
+        return;
+      }
       const fd = new FormData();
       for (const img of list) {
         if (img.file) fd.append("images", img.file);
@@ -80,7 +101,7 @@ export default function Home() {
 
   const loadSamplePillbox = useCallback(() => {
     const imgs: ScanImage[] = SAMPLES.map((s) => ({
-      url: `/samples/${s}.png`,
+      url: `samples/${s}.png`,
       sample: s,
     }));
     setImages(imgs);
@@ -118,14 +139,18 @@ export default function Home() {
           confidence: m.confidence,
         }));
       saveMeds(inputs);
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meds: inputs, lang }),
-      });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error ?? "analysis failed");
-      setAnalysis(j as Analysis);
+      if (IS_STATIC) {
+        setAnalysis(await analyzeBrowser(inputs, lang));
+      } else {
+        const res = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ meds: inputs, lang }),
+        });
+        const j = await res.json();
+        if (!res.ok) throw new Error(j.error ?? "analysis failed");
+        setAnalysis(j as Analysis);
+      }
       setPhase("results");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed");
@@ -255,7 +280,7 @@ export default function Home() {
             <button
               key={s}
               onClick={() => {
-                const img = { url: `/samples/${s}.png`, sample: s };
+                const img = { url: `samples/${s}.png`, sample: s };
                 setImages((c) => [...c, img]);
               }}
               className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-600 transition hover:border-teal-400"
@@ -271,6 +296,73 @@ export default function Home() {
             ⚡ Scan all 4 at once
           </button>
         </div>
+
+        {IS_STATIC && (
+          <div className="mt-8 w-full max-w-md">
+            <button
+              onClick={() => setShowByok((s) => !s)}
+              className="mx-auto block text-xs font-medium text-zinc-400 hover:text-teal-600"
+            >
+              ⚙ {getByok() ? "✓ live AI key set" : "demo mode — add an API key for live label reading"}
+            </button>
+            {showByok && (
+              <div className="mt-2 rounded-xl border border-zinc-200 bg-white p-4 text-left">
+                <p className="mb-2 text-xs text-zinc-500">
+                  This is a static demo — there is no server. Paste any
+                  OpenAI-compatible key to enable real label reading. Stored only
+                  in your browser, never sent anywhere except the endpoint below.
+                </p>
+                {(
+                  [
+                    ["baseUrl", "Base URL", "https://api.featherless.ai/v1"],
+                    ["apiKey", "API key", "your-key-here"],
+                    ["vlModel", "Vision model", "Qwen/Qwen3-VL-30B-A3B-Instruct"],
+                    ["textModel", "Text model", "Qwen/Qwen3-32B"],
+                  ] as [keyof ByokConfig, string, string][]
+                ).map(([k, label, ph]) => (
+                  <label key={k} className="mb-2 block">
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">{label}</span>
+                    <input
+                      id={`byok-${k}`}
+                      defaultValue={getByok()?.[k] ?? ""}
+                      placeholder={ph}
+                      type={k === "apiKey" ? "password" : "text"}
+                      className="mt-0.5 w-full rounded-md border border-zinc-300 px-2 py-1.5 text-xs outline-none focus:border-teal-500"
+                    />
+                  </label>
+                ))}
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={() => {
+                      const v = (k: string) =>
+                        (document.getElementById(`byok-${k}`) as HTMLInputElement).value.trim();
+                      const cfg: ByokConfig = {
+                        baseUrl: v("baseUrl") || "https://api.featherless.ai/v1",
+                        apiKey: v("apiKey"),
+                        vlModel: v("vlModel") || "Qwen/Qwen3-VL-30B-A3B-Instruct",
+                        textModel: v("textModel") || "Qwen/Qwen3-32B",
+                      };
+                      saveByok(cfg.apiKey ? cfg : null);
+                      setShowByok(false);
+                    }}
+                    className="rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700"
+                  >
+                    Save key
+                  </button>
+                  <button
+                    onClick={() => {
+                      saveByok(null);
+                      setShowByok(false);
+                    }}
+                    className="rounded-lg px-3 py-1.5 text-xs text-zinc-500 hover:bg-zinc-100"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {savedList.length > 0 && (
           <button
