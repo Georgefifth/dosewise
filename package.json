@@ -9,16 +9,12 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "fontkit": "^2.0.4",
     "next": "16.3.5",
-    "pdf-lib": "^1.17.1",
-    "pdfjs-dist": "^6.3.289",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/fontkit": "^2.0.9",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

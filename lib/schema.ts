@@ -1,61 +1,63 @@
-export type FieldType = "text" | "checkbox" | "radio" | "dropdown" | "optionlist";
-
-export interface WidgetRect {
-  /** 1-based page index */
-  page: number;
-  /** PDF points, origin bottom-left (native PDF space) */
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  /** export value for radio/checkbox kid widgets */
-  option?: string;
-}
-
-export interface FormField {
+export interface ScannedMed {
   id: string;
-  name: string;
-  type: FieldType;
-  required: boolean;
-  options?: string[];
-  maxLength?: number;
-  rects: WidgetRect[];
-  /** pre-filled value already in the document */
-  value?: string;
+  /** index into the uploaded/sample image list */
+  image?: number;
+  brand?: string;
+  generic: string;
+  strength?: string;
+  form?: string;
+  /** directions text exactly as printed ("sig") */
+  sig?: string;
+  quantity?: string;
+  prescriber?: string;
+  confidence: "high" | "medium" | "low";
+  rawText?: string;
+  notes?: string;
 }
 
-export interface ExtractedForm {
+export type Severity = "major" | "moderate" | "minor" | "info";
+
+export interface Interaction {
+  severity: Severity;
+  /** display names of the two meds involved */
+  a: string;
+  b: string;
   title: string;
-  fieldCount: number;
-  fields: FormField[];
-  pageSizes: { width: number; height: number }[];
+  /** plain-language mechanism */
+  mechanism: string;
+  /** what to do about it */
+  advice: string;
 }
 
-export interface Question {
-  fieldId: string;
-  /** plain-language question in the user's language */
-  question: string;
-  /** "why is this asked" / jargon buster */
-  help?: string;
-  /** format hint, e.g. "MM/DD/YYYY" */
-  hint?: string;
-  /** stable semantic key for the answer vault, e.g. "full_name" */
-  semanticKey?: string;
+export type Slot = "morning" | "noon" | "evening" | "bedtime" | "as_needed";
+
+export interface ScheduleEntry {
+  medId: string;
+  slots: Slot[];
+  withFood?: boolean;
+  emptyStomach?: boolean;
+  timingNote?: string;
 }
 
-export interface InterviewPlan {
-  title: string;
-  intro: string;
-  questions: Question[];
-  /** documents/items the user should gather */
-  checklist: string[];
+export interface MedExplanation {
+  medId: string;
+  purpose: string;
+  tips?: string;
+}
+
+export interface Analysis {
+  interactions: Interaction[];
+  schedule: ScheduleEntry[];
+  explanations: MedExplanation[];
+  pharmacistQuestions: string[];
   source: "ai" | "offline";
-  lang: string;
 }
 
-export type AnswerMap = Record<string, string | boolean>;
-
-export interface FillProblem {
-  fieldId: string;
-  reason: string;
+export interface MedInput {
+  id: string;
+  generic: string;
+  strength?: string;
+  sig?: string;
+  image?: number;
+  confidence?: string;
 }

@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f7f5f1;
+  --background: #f4f7f6;
   --foreground: #171717;
 }
 
@@ -16,4 +16,21 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #wallet-card,
+  #wallet-card * {
+    visibility: visible;
+  }
+  #wallet-card {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    border: 2px solid #0f766e;
+  }
 }

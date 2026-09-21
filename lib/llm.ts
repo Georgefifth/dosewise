@@ -1,24 +1,20 @@
-import type {
-  AnswerMap,
-  ExtractedForm,
-  InterviewPlan,
-  Question,
-} from "./schema";
-import { LANG_NAME, labelFor, semanticFor, t } from "./i18n";
+import { DRUGS, resolveDrug } from "./drugs";
+import type { MedExplanation, ScannedMed } from "./schema";
 
-/* ------------------------------------------------------------------ */
-/* OpenAI-compatible chat with provider resilience                      */
-/* ------------------------------------------------------------------ */
+/* OpenAI-compatible provider layer.
+   - vision calls (VL_MODEL / VL_MODEL_FALLBACK) read label photos
+   - text calls (LLM_MODEL / LLM_MODEL_FALLBACK) write explanations
+   - hardened for flaky upstreams: custom UA (Cloudflare), cold-start retries,
+     model fallback, <think> stripping, `!`-flood detection */
 
 const BASE = () => process.env.LLM_BASE_URL?.replace(/\/$/, "");
 const KEY = () => process.env.LLM_API_KEY;
-const MODELS = () =>
-  [process.env.LLM_MODEL, process.env.LLM_MODEL_FALLBACK].filter(
-    (m): m is string => !!m,
-  );
+const VL_MODELS = () =>
+  [process.env.VL_MODEL, process.env.VL_MODEL_FALLBACK].filter((m): m is string => !!m);
+const TEXT_MODELS = () =>
+  [process.env.LLM_MODEL, process.env.LLM_MODEL_FALLBACK].filter((m): m is string => !!m);
 
-// Cloudflare blocks default fetch UAs on some providers (error 1010).
-const UA = "FormPilot/1.0 (+hackathon; contact: devpost)";
+const UA = "DoseWise/1.0 (+hackathon)";
 
 class UpstreamError extends Error {
   constructor(
@@ -29,28 +25,56 @@ class UpstreamError extends Error {
   }
 }
 
-/** Strip <think>…</think> and dangling think-tails; detect `!` token floods. */
 function cleanCompletion(raw: string): string {
   let s = raw.replace(/<think>[\s\S]*?<\/think>/g, "");
-  s = s.replace(/<think>[\s\S]*$/g, ""); // unterminated think
-  if (/^!+$/.test(s.trim())) return ""; // pure flood
-  s = s.replace(/\n!{20,}[\s\S]*$/, ""); // trailing flood
+  s = s.replace(/<think>[\s\S]*$/g, "");
+  if (/^!+$/.test(s.trim())) return "";
+  s = s.replace(/\n!{20,}[\s\S]*$/, "");
   return s.trim();
 }
 
-async function llmChat(
-  system: string,
-  user: string,
-  { json = false, timeoutMs = 90_000 } = {},
+type Msg =
+  | { role: "system"; content: string }
+  | {
+      role: "user";
+      content:
+        | string
+        | (
+            | { type: "text"; text: string }
+            | { type: "image_url"; image_url: { url: string } }
+          )[];
+    };
+
+async function chat(
+  models: string[],
+  messages: Msg[],
+  { json = false, timeoutMs = 120_000 } = {},
 ): Promise<string | null> {
   const base = BASE();
   const key = KEY();
-  if (!base || !key) return null;
+  if (!base || !key || !models.length) return null;
 
-  for (const model of MODELS()) {
+  for (const model of models) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const isQwen3 = /qwen3/i.test(model);
+        const msgs: Msg[] = isQwen3
+          ? messages.map((m, i) => {
+              if (i !== messages.length - 1 || m.role !== "user") return m;
+              if (typeof m.content === "string")
+                return { ...m, content: `${m.content}\n/no_think` };
+              const parts = [...m.content];
+              for (let j = parts.length - 1; j >= 0; j--) {
+                const c = parts[j];
+                if (c.type === "text") {
+                  parts[j] = { ...c, text: `${c.text}\n/no_think` };
+                  break;
+                }
+              }
+              return { ...m, content: parts };
+            })
+          : messages;
+
         const res = await fetch(`${base}/chat/completions`, {
           method: "POST",
           headers: {
@@ -60,40 +84,35 @@ async function llmChat(
           },
           body: JSON.stringify({
             model,
-            temperature: 0.2,
-            messages: [
-              { role: "system", content: system },
-              { role: "user", content: isQwen3 ? `${user}\n/no_think` : user },
-            ],
+            temperature: 0.1,
+            messages: msgs,
             ...(json ? { response_format: { type: "json_object" } } : {}),
           }),
           signal: AbortSignal.timeout(timeoutMs),
         });
         if (!res.ok) {
           const body = await res.text().catch(() => "");
-          // capacity / cold start → retry same model once, then next model
-          if (res.status === 503 || res.status === 429 || /capacity/i.test(body)) {
+          if (res.status === 503 || res.status === 429 || /capacity|rate/i.test(body)) {
             if (attempt === 0) {
-              await new Promise((r) => setTimeout(r, 2500));
+              await new Promise((r) => setTimeout(r, 3000));
               continue;
             }
             break;
           }
-          throw new UpstreamError(res.status, body.slice(0, 200));
+          throw new UpstreamError(res.status, body.slice(0, 300));
         }
         const data = await res.json();
-        const content: string | undefined =
-          data?.choices?.[0]?.message?.content ?? undefined;
+        const content: string | undefined = data?.choices?.[0]?.message?.content;
         if (!content) break;
         const cleaned = cleanCompletion(content);
-        if (!cleaned) break; // flood → next model
+        if (!cleaned) break;
         return cleaned;
       } catch (err) {
         if (attempt === 0 && !(err instanceof UpstreamError)) {
-          await new Promise((r) => setTimeout(r, 1500));
-          continue; // network hiccup / cold start timeout → retry once
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
         }
-        break; // → next model
+        break;
       }
     }
   }
@@ -112,218 +131,164 @@ function extractJson(raw: string): unknown | null {
 }
 
 /* ------------------------------------------------------------------ */
-/* Interview plan                                                      */
+/* Label scanning (vision)                                             */
 /* ------------------------------------------------------------------ */
 
-export function mockPlan(form: ExtractedForm, lang: string): InterviewPlan {
-  const tr = t(lang);
-  const questions: Question[] = form.fields.map((f) => {
-    const sem = semanticFor(f.name);
-    const label = labelFor(f.name, lang);
-    const template =
-      f.type === "checkbox"
-        ? tr.confirm
-        : f.options?.length
-          ? tr.provideChoice
-          : tr.provide;
+const SCAN_SYSTEM = `You are a pharmacy-label OCR assistant. Read the medication label photo and output ONLY a JSON object:
+{"generic": "generic drug name (lowercase)", "brand": "brand name or null", "strength": "e.g. 5 mg", "form": "tablet|capsule|liquid|spray|patch|null", "sig": "the directions text verbatim, e.g. 'take one tablet by mouth twice daily'", "quantity": "e.g. 30 tablets or null", "prescriber": "prescriber name or null", "confidence": "high|medium|low"}
+If the image is not a medication label, output {"generic": null, "confidence": "low", "notes": "not a medication label"}.`;
+
+export async function scanLabelImage(
+  imageB64: string,
+  mime: string,
+  id: string,
+  imageIdx: number,
+): Promise<ScannedMed> {
+  const raw = await chat(VL_MODELS(), [
+    { role: "system", content: SCAN_SYSTEM },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "Extract this medication label." },
+        { type: "image_url", image_url: { url: `data:${mime};base64,${imageB64}` } },
+      ],
+    },
+  ]);
+
+  const parsed = raw ? (extractJson(raw) as Record<string, unknown> | null) : null;
+  if (!parsed || typeof parsed !== "object") {
     return {
-      fieldId: f.id,
-      question: template.replace("{label}", label),
-      help: sem?.why ? tr.whyAsked.replace("{why}", sem.why) : undefined,
-      hint: f.type === "text" ? (sem?.hint ?? (f.maxLength ? `max ${f.maxLength} chars` : undefined)) : undefined,
-      semanticKey: sem?.key,
+      id,
+      image: imageIdx,
+      generic: "",
+      confidence: "low",
+      notes: "Could not read this label — please type the details.",
+    };
+  }
+
+  const generic = typeof parsed.generic === "string" ? parsed.generic : "";
+  const resolved = generic ? resolveDrug(generic) : undefined;
+  return {
+    id,
+    image: imageIdx,
+    generic: resolved?.generic ?? generic,
+    brand: typeof parsed.brand === "string" ? parsed.brand : undefined,
+    strength: typeof parsed.strength === "string" ? parsed.strength : undefined,
+    form: typeof parsed.form === "string" ? parsed.form : undefined,
+    sig: typeof parsed.sig === "string" ? parsed.sig : undefined,
+    quantity: typeof parsed.quantity === "string" ? parsed.quantity : undefined,
+    prescriber: typeof parsed.prescriber === "string" ? parsed.prescriber : undefined,
+    confidence:
+      parsed.confidence === "high" || parsed.confidence === "medium" ? parsed.confidence : "low",
+    notes: typeof parsed.notes === "string" ? parsed.notes : undefined,
+  };
+}
+
+/** Canned scans for bundled samples — used when no LLM key is configured. */
+export function mockScan(id: string, imageIdx: number, sampleName: string): ScannedMed {
+  const table: Record<string, Omit<ScannedMed, "id" | "image">> = {
+    warfarin: {
+      generic: "warfarin", brand: "Coumadin", strength: "5 mg", form: "tablet",
+      sig: "take one tablet by mouth once daily", quantity: "30 tablets",
+      prescriber: "Dr. A. Chen", confidence: "high",
+    },
+    ibuprofen: {
+      generic: "ibuprofen", brand: "Advil", strength: "200 mg", form: "tablet",
+      sig: "take one tablet every 6 hours as needed for pain", quantity: "100 tablets",
+      confidence: "high",
+    },
+    lisinopril: {
+      generic: "lisinopril", strength: "10 mg", form: "tablet",
+      sig: "take one tablet by mouth once daily", quantity: "90 tablets",
+      prescriber: "Dr. A. Chen", confidence: "high",
+    },
+    simvastatin: {
+      generic: "simvastatin", brand: "Zocor", strength: "20 mg", form: "tablet",
+      sig: "take one tablet by mouth at bedtime", quantity: "30 tablets",
+      prescriber: "Dr. A. Chen", confidence: "high",
+    },
+  };
+  const base = table[sampleName] ?? {
+    generic: "", confidence: "low" as const, notes: "demo image",
+  };
+  return { id, image: imageIdx, ...base };
+}
+
+/* ------------------------------------------------------------------ */
+/* Explanations + pharmacist questions (text LLM)                      */
+/* ------------------------------------------------------------------ */
+
+export function mockExplain(meds: { id: string; generic: string }[]): {
+  explanations: MedExplanation[];
+  pharmacistQuestions: string[];
+} {
+  const explanations: MedExplanation[] = meds.map((m) => {
+    const info = resolveDrug(m.generic);
+    return {
+      medId: m.id,
+      purpose: info
+        ? `${info.generic.charAt(0).toUpperCase() + info.generic.slice(1)} is ${info.purpose}`
+        : `${m.generic} — purpose not in the offline dictionary; ask your pharmacist.`,
+      tips: info?.foodNote,
     };
   });
-
-  const checklist = inferChecklist(form, lang);
-
-  return {
-    title: form.title,
-    intro: tr.intro,
-    questions,
-    checklist,
-    source: "offline",
-    lang,
-  };
-}
-
-function inferChecklist(form: ExtractedForm, lang: string): string[] {
-  const items: Record<string, string> = {
-    en: "Government-issued photo ID",
-    es: "Identificación oficial con foto",
-    zh: "政府签发的带照片身份证件",
-    hi: "सरकारी फ़ोटो पहचान पत्र",
-    fr: "Pièce d'identité officielle avec photo",
-    ar: "بطاقة هوية حكومية بصورة",
-  };
-  const income: Record<string, string> = {
-    en: "Recent pay stubs or income proof",
-    es: "Recibos de pago o comprobante de ingresos",
-    zh: "近期工资单或收入证明",
-    hi: "हाल की वेतन पर्ची या आय प्रमाण",
-    fr: "Bulletins de salaire récents ou justificatif de revenus",
-    ar: "قسائم راتب حديثة أو إثبات دخل",
-  };
-  const card: Record<string, string> = {
-    en: "Insurance card",
-    es: "Tarjeta de seguro",
-    zh: "医保卡",
-    hi: "बीमा कार्ड",
-    fr: "Carte d'assurance",
-    ar: "بطاقة التأمين",
-  };
-  const out: string[] = [items[lang] ?? items.en];
-  if (form.fields.some((f) => /income|salary|wage|ssn/i.test(f.name)))
-    out.push(income[lang] ?? income.en);
-  if (form.fields.some((f) => /insur|member|policy/i.test(f.name)))
-    out.push(card[lang] ?? card.en);
-  return out;
-}
-
-export async function planInterview(
-  form: ExtractedForm,
-  lang: string,
-): Promise<InterviewPlan> {
-  const fallback = mockPlan(form, lang);
-  if (!BASE() || !KEY()) return fallback;
-
-  const langName = LANG_NAME[lang] ?? "English";
-  const compact = form.fields.map((f) => ({
-    id: f.id,
-    name: f.name,
-    type: f.type,
-    required: f.required,
-    options: f.options,
-    currentValue: f.value,
-  }));
-
-  const system =
-    "You are FormPilot, an assistant that turns bureaucratic PDF form fields into a warm, plain-language guided interview. You output ONLY valid JSON.";
-  const user = `Here are the AcroForm fields extracted from a PDF titled "${form.title}":
-
-${JSON.stringify(compact, null, 1)}
-
-Produce a JSON object with EXACTLY this shape:
-{
-  "title": "short friendly title for this form",
-  "intro": "1-2 sentence welcome explaining what you'll do, in ${langName}",
-  "questions": [
-    {
-      "fieldId": "<id from the list above — every field id must appear exactly once>",
-      "question": "a plain-language question in ${langName} asking for this value",
-      "help": "one sentence in ${langName} explaining WHY the form asks this / what it means in plain words",
-      "hint": "format hint like 'MM/DD/YYYY' or '9 digits' when useful (omit otherwise)",
-      "semanticKey": "one of: full_name, first_name, last_name, dob, ssn, email, phone, address, city, state, zip, country, gender, income, household_size, employed, employer, signature, date — or omit"
-    }
-  ],
-  "checklist": ["2-4 documents the user should physically have ready, in ${langName}"]
-}
-
-Rules:
-- questions must cover EVERY field id, in the same order given
-- for checkbox fields, phrase as a yes/no question
-- for radio/dropdown fields, ask which option applies (do not list options — the UI shows them)
-- never use bureaucratic jargon; write at a 6th-grade reading level
-- write ALL question/help/intro/checklist text in ${langName}`;
-
-  const raw = await llmChat(system, user, { json: true });
-  const parsed = raw ? (extractJson(raw) as Partial<InterviewPlan> | null) : null;
-  if (!parsed || !Array.isArray(parsed.questions)) return fallback;
-
-  // Merge: keep valid LLM questions for known field ids, in LLM order,
-  // then append mock questions for any fields the model skipped.
-  const knownIds = new Set(form.fields.map((f) => f.id));
-  const seenIds = new Set<string>();
-  const questions: Question[] = [];
-  for (const q of parsed.questions) {
-    if (
-      !q ||
-      typeof q.fieldId !== "string" ||
-      !knownIds.has(q.fieldId) ||
-      seenIds.has(q.fieldId) ||
-      typeof q.question !== "string" ||
-      !q.question.trim()
-    )
-      continue;
-    seenIds.add(q.fieldId);
-    questions.push({
-      fieldId: q.fieldId,
-      question: q.question.trim(),
-      help: typeof q.help === "string" ? q.help : undefined,
-      hint: typeof q.hint === "string" ? q.hint : undefined,
-      semanticKey:
-        typeof q.semanticKey === "string" ? q.semanticKey : semanticFor(form.fields.find((f) => f.id === q.fieldId)?.name ?? "")?.key,
-    });
-  }
-  for (const q of fallback.questions)
-    if (!seenIds.has(q.fieldId)) questions.push(q);
-
-  return {
-    title: typeof parsed.title === "string" ? parsed.title : fallback.title,
-    intro: typeof parsed.intro === "string" ? parsed.intro : fallback.intro,
-    questions,
-    checklist:
-      Array.isArray(parsed.checklist) && parsed.checklist.every((c) => typeof c === "string")
-        ? parsed.checklist
-        : fallback.checklist,
-    source: "ai",
-    lang,
-  };
-}
-
-/* ------------------------------------------------------------------ */
-/* Submission summary                                                   */
-/* ------------------------------------------------------------------ */
-
-export function mockSummary(
-  form: ExtractedForm,
-  answers: AnswerMap,
-  lang: string,
-): string {
-  const lines: string[] = [
-    `# ${form.title}`,
-    "",
-    `_${new Date().toLocaleDateString()}_`,
-    "",
-    "| Field | Your answer |",
-    "| --- | --- |",
+  const pharmacistQuestions = [
+    "Can I take all of these together safely?",
+    "Are there any foods, drinks, or supplements I should avoid?",
+    "What should I do if I miss a dose of any of these?",
   ];
-  for (const f of form.fields) {
-    const a = answers[f.id];
-    const shown =
-      a === undefined || a === "" ? "—" : a === true ? "☑ yes" : a === false ? "☐ no" : String(a);
-    lines.push(`| ${labelFor(f.name, lang)} | ${shown} |`);
-  }
-  return lines.join("\n");
+  return { explanations, pharmacistQuestions };
 }
 
-export async function summarizeSubmission(
-  form: ExtractedForm,
-  answers: AnswerMap,
+export async function explainMeds(
+  meds: { id: string; generic: string; strength?: string; sig?: string }[],
   lang: string,
-): Promise<string> {
-  const fallback = mockSummary(form, answers, lang);
-  if (!BASE() || !KEY()) return fallback;
+): Promise<{ explanations: MedExplanation[]; pharmacistQuestions: string[]; source: "ai" | "offline" }> {
+  const fallback = mockExplain(meds);
+  if (!BASE() || !KEY() || !meds.length)
+    return { ...fallback, source: "offline" };
 
-  const langName = LANG_NAME[lang] ?? "English";
-  const rows = form.fields.map((f) => ({
-    field: f.name,
-    answer: answers[f.id] ?? null,
-  }));
+  const langName =
+    (await import("./i18n")).LANG_NAME[lang] ?? "English";
+
   const system =
-    "You write concise, warm plain-language summaries of a form a person just filled out. Output markdown only.";
-  const user = `Form: "${form.title}". Language: ${langName}.
+    "You write short, warm, plain-language medication explanations for patients. Output ONLY valid JSON. You are not giving medical advice — you describe what each medicine is commonly for.";
+  const user = `Medications (JSON):
+${JSON.stringify(meds.map((m) => ({ id: m.id, generic: m.generic, strength: m.strength, sig: m.sig })), null, 1)}
 
-Fields and answers (JSON):
-${JSON.stringify(rows, null, 1)}
+Output JSON:
+{
+  "explanations": [ { "medId": "<id>", "purpose": "one sentence: what this medicine is for, in ${langName}, 6th-grade level", "tips": "one practical tip (food/timing/monitoring) or null" } ],
+  "pharmacistQuestions": ["3-4 smart questions this person should ask their pharmacist about THIS combination, in ${langName}"]
+}
+Every medId must appear exactly once.`;
 
-Write a short markdown summary in ${langName}:
-- "## What you just submitted" section with 2-3 sentences in plain words
-- a compact table: | Field | You answered |
-- a "## What happens next" section: 2-3 realistic next steps for this kind of form (review, mailing/portal submission, expected wait)
-- a "## Watch out for" section with 1-3 common pitfalls for these fields (e.g. unsigned forms get rejected)
-Keep it under 300 words.`;
+  const raw = await chat(TEXT_MODELS(), [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ]);
+  const parsed = raw ? (extractJson(raw) as Record<string, unknown> | null) : null;
 
-  const raw = await llmChat(system, user, { json: false });
-  return raw && raw.length > 40 ? raw : fallback;
+  if (!parsed || !Array.isArray(parsed.explanations)) return { ...fallback, source: "offline" };
+
+  const known = new Set(meds.map((m) => m.id));
+  const seen = new Set<string>();
+  const explanations: MedExplanation[] = [];
+  for (const e of parsed.explanations as MedExplanation[]) {
+    if (!e || !known.has(e.medId) || seen.has(e.medId) || typeof e.purpose !== "string") continue;
+    seen.add(e.medId);
+    explanations.push({ medId: e.medId, purpose: e.purpose, tips: typeof e.tips === "string" ? e.tips : undefined });
+  }
+  for (const f of fallback.explanations) if (!seen.has(f.medId)) explanations.push(f);
+
+  const questions = Array.isArray(parsed.pharmacistQuestions)
+    ? (parsed.pharmacistQuestions as unknown[]).filter((q): q is string => typeof q === "string")
+    : fallback.pharmacistQuestions;
+
+  return { explanations, pharmacistQuestions: questions, source: "ai" };
+}
+
+/** used by analyze route to attach purposes when AI is off — keeps a single path */
+export function knownGenerics(): string[] {
+  return DRUGS.map((d) => d.generic);
 }

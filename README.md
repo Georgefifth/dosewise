@@ -1,62 +1,39 @@
-# FormPilot — Paperwork, translated
+# DoseWise — see all your meds, safely
 
-**Upload any fillable PDF form. FormPilot turns every cryptic field into a plain-language question — in your language — then writes your answers into the real document.**
+**Photograph your pill bottles. DoseWise reads every label, checks the combinations against an interaction rule table, and builds a visual schedule you can actually follow.**
 
 Built for **InfinityX Global Hackathon 2K26**.
 
 ## The problem
 
-Every year, **$140B+** in U.S. benefits go unclaimed. Millions of applications — for food assistance, healthcare, housing, immigration — are abandoned or rejected not because people are ineligible, but because the *form itself* is the barrier: cryptic field names (`gross_mth_inc_amt`), bureaucratic jargon, and instructions written at a college reading level. The burden falls hardest on immigrants, seniors, and the ~1 in 5 adults who struggle with forms.
+- **~1.5M** people are harmed by medication errors every year in the US alone
+- **~40%** of seniors take **5+** medications daily
+- The classic failure: nobody sees *all* the meds at once — so a blood thinner plus an innocent OTC painkiller slips through, schedules collide, and "what is this one even for?" goes unanswered
 
-## What FormPilot does
+## What it does
 
-| Step | What happens |
-| --- | --- |
-| **Upload** | Drop any fillable PDF (AcroForm) — or pick a bundled sample. |
-| **Decode** | Server extracts every real form field with its exact position on the page; the AI layer rewrites each as a plain-language question *in the language you choose*. |
-| **Interview** | One friendly question at a time — with the actual field highlighted live on the document. Every field carries a "why is this asked?" explanation. |
-| **Fill** | Answers are written into the real PDF (text, checkboxes, radio groups, dropdowns) and downloaded, plus a plain-language summary of what you just submitted. |
+```
+📷 photo labels → 👁 vision model reads them → ✅ you confirm the list
+        → ⚠️ interaction alerts (rule-table, not hallucinated)
+        → 🕐 daily schedule grid with the actual bottle photos
+        → 💊 plain-language "what is this for" per med (6+ languages)
+        → 🪪 printable wallet card + questions to ask your pharmacist
+```
 
-### Highlights
+### Why the hybrid architecture matters
 
-- **Field-level grounding** — the widget being asked about lights up on the PDF as you go. Click any field to jump to its question.
-- **Multilingual interview** — the form stays in its original language; the conversation happens in yours (EN/ES/ZH/HI/FR/AR, more via the LLM).
-- **Answer vault** — semantic answers (name, DOB, address…) are remembered *locally* and pre-fill the next form. Nothing leaves the device.
-- **Document checklist** — tells you what to gather (ID, pay stubs, insurance card) before you start.
-- **Voice input** — Web Speech API dictation on text fields.
-- **Offline-resilient AI** — any OpenAI-compatible endpoint; a deterministic fallback planner keeps the full experience working with zero keys, so the demo never breaks.
-- **Accessibility** — large-text mode, keyboard-first flow, one-question-at-a-time cognitive load.
+The LLM is used where it's strong — **reading messy label photos** and **writing plain-language explanations**. The safety layer is **deterministic**: drug-class interaction rules (`lib/interactions.ts`) and sig parsing (`lib/schedule.ts`) are auditable code, never hallucinated. If a warning appears, a human can point at the exact rule that produced it.
+
+The **confirm screen is a feature**: the user verifies what the camera read before anything is analyzed — human-in-the-loop by design.
 
 ## Tech stack
 
-- **Next.js 16** (App Router, Turbopack) + TypeScript + Tailwind CSS v4
-- **pdf-lib** — AcroForm extraction, widget rect mapping, real PDF filling (incl. Unicode font embedding for non-Latin answers)
-- **pdfjs-dist** — in-browser document rendering with overlay highlights
-- **LLM**: any OpenAI-compatible endpoint (`LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`; developed against Featherless `Qwen/Qwen3-32B` with a DeepSeek fallback). Handles cold starts, `capacity_exhausted` retries, `<think>` stripping, and graceful degradation to the offline planner.
-
-## Architecture
-
-```
-app/
-  page.tsx            # phase orchestrator: landing → interview → review → done
-  api/extract/        # POST file|sample → ExtractedForm (fields + widget rects)
-  api/plan/           # POST {form, lang} → InterviewPlan (LLM or offline)
-  api/fill/           # POST file|sample + answers → filled PDF bytes
-  api/summary/        # POST {form, answers, lang} → markdown summary
-lib/
-  pdf.ts              # AcroForm walk: fields, widget rects→pages, fill w/ font fallback
-  llm.ts              # provider layer: retries, model fallback, think-strip, mock
-  i18n.ts             # language strings, semantic field dictionary
-  samples.ts          # bundled sample loader (fs → http fallback)
-  schema.ts           # shared types
-components/
-  PdfViewer.tsx       # pdfjs canvas + per-widget highlight overlays
-  Interview.tsx       # guided Q&A, voice input, vault chips
-  FieldReview.tsx     # editable answer table
-  MarkdownLite.tsx    # zero-dep markdown renderer
-scripts/
-  make-samples.ts     # regenerates the 3 bundled AcroForm PDFs
-```
+- **Next.js 16** (App Router, Turbopack) + TypeScript + Tailwind v4
+- **Vision LLM**: OpenAI-compatible `chat/completions` with `image_url` (developed on Featherless `Qwen/Qwen3-VL-30B-A3B-Instruct`, fallback `Qwen2.5-VL-72B`)
+- **Text LLM**: `Qwen/Qwen3-32B` for explanations + pharmacist questions (fallback DeepSeek-R1-70B)
+- **Provider resilience**: custom UA (Cloudflare), cold-start retries, model fallback chain, `<think>` stripping, `!`-flood filtering — and a fully working offline path with canned scans when no key is set
+- **Deterministic core**: ~40-drug knowledge table (`lib/drugs.ts`), 20-rule interaction engine, sig→schedule parser
+- **Sample labels**: Pillow-rendered fictional pharmacy labels (`scripts/make-sample-labels.py`) — zero PHI, obviously demo data
 
 ## Quickstart
 
@@ -65,30 +42,30 @@ pnpm install
 pnpm dev          # http://localhost:3000
 ```
 
-No keys needed — the offline planner handles everything. To enable a real LLM:
+Works with **no keys** (demo mode: canned scans + full rule engine). For live vision:
 
 ```bash
-cp .env.example .env.local   # fill in LLM_BASE_URL / LLM_API_KEY / LLM_MODEL
+cp .env.example .env.local   # set LLM_BASE_URL / LLM_API_KEY / VL_MODEL / LLM_MODEL
 ```
 
-Regenerate sample PDFs: `pnpm tsx scripts/make-samples.ts`
+Regenerate labels: `python3 scripts/make-sample-labels.py`
 
-## Demo script (5 min)
+## Demo script
 
-1. **Landing** — pick *Form SB-10 · Benefits Application* (or drop your own PDF).
-2. Set language to **中文** or **Español** — watch bureaucratic field names become warm questions.
-3. Answer 2–3 questions — note the **field lighting up on the PDF** each time; click "ⓘ why is this asked?" on the SSN field.
-4. Click a field **on the document** — the interview jumps to it.
-5. **Review** screen → *Fill the PDF & finish* → download opens with every answer inside the real form (accented characters included).
-6. Start a second form → your name/address are **already remembered** from the vault.
+1. Landing → **⚡ Scan all 4 at once** (sample pillbox: warfarin, ibuprofen, lisinopril, simvastatin)
+2. Confirm screen — watch the VL-extracted fields; edit a strength to show human-in-the-loop
+3. **Analyze** → 🔴 MAJOR alert: warfarin × ibuprofen (bleeding risk) + moderate NSAID × ACE note
+4. Schedule grid — warfarin lands in evening, simvastatin at bedtime, ibuprofen PRN; grapefruit warning on simvastatin
+5. Plain-language purposes (switch the language picker → re-analyze for Spanish/Chinese)
+6. **Print the wallet card** → PDF for Grandma's purse
 
-## Privacy
+## Safety & privacy
 
-PDF bytes live only in request scope; nothing is persisted server-side. The answer vault is `localStorage` — on-device only.
+Not medical advice — every screen says so. Images live only in request scope; the saved med list is `localStorage`. Interaction warnings come only from the curated rule table.
 
 ## Roadmap
 
-- Flat scans → field detection via vision model (non-AcroForm PDFs)
-- Signature pad + drawn-signature embedding
-- Multi-form packets (the same answers across an agency's whole packet)
-- DOCX/XFA support
+- Barcode/NDC scanning for exact identification
+- Caregiver sharing (read-only link / QR)
+- Refill & interaction-aware reminders
+- Larger validated rule set (e.g. openFDA/FDB data)

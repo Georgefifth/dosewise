@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FormPilot — Paperwork, translated",
+  title: "DoseWise — see all your meds, safely",
   description:
-    "Upload any fillable PDF form. FormPilot turns cryptic fields into a plain-language guided interview — in your language — then fills the real PDF.",
+    "Photograph your medication labels. DoseWise reads them, checks dangerous interactions, and builds a visual schedule you can actually follow.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
