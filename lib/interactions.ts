@@ -184,6 +184,52 @@ export function checkInteractions(meds: MedInput[]): Interaction[] {
         }
       }
 
+      // ingredient-level duplication — hidden double-doses like
+      // Norco (hydrocodone+acetaminophen) taken alongside plain Tylenol
+      const ingA = new Set(A.info?.contains ?? [A.generic]);
+      const ingB = new Set(B.info?.contains ?? [B.generic]);
+      for (const ing of ingA) {
+        if (!ingB.has(ing)) continue;
+        const k = pairKey + "ing:" + ing;
+        if (seenPairs.has(k)) continue;
+        seenPairs.add(k);
+        const identical = ing === A.generic && ing === B.generic;
+        const danger: Record<string, { severity: Severity; mechanism: string; advice: string }> = {
+          acetaminophen: {
+            severity: "major",
+            mechanism:
+              "Both products contain acetaminophen (Tylenol). Taking them together can quietly push the daily dose past the 4 g limit — the leading cause of acute liver failure in the US.",
+            advice: "Do not take both. Check every label for 'acetaminophen' or 'APAP' before adding a pain reliever.",
+          },
+          aspirin: {
+            severity: "major",
+            mechanism: "Both products contain aspirin — doubling up raises bleeding and ulcer risk.",
+            advice: "Pick one source of aspirin; confirm with the prescriber.",
+          },
+          ibuprofen: {
+            severity: "major",
+            mechanism: "Both products contain ibuprofen — doubling up raises bleeding, ulcer, and kidney risk.",
+            advice: "Pick one source of ibuprofen.",
+          },
+        };
+        const d = danger[ing] ?? {
+          severity: "moderate" as Severity,
+          mechanism: identical
+            ? "The same medication appears twice on the list."
+            : `Both products contain ${ing} — the same ingredient twice usually adds side effects, not benefit.`,
+          advice: "Confirm with the prescriber that both are intentional.",
+        };
+        out.push({
+          severity: d.severity,
+          a: A.generic, b: B.generic,
+          title: identical
+            ? "Same medication listed twice"
+            : `Hidden double dose: both contain ${ing}`,
+          mechanism: d.mechanism,
+          advice: d.advice,
+        });
+      }
+
       // duplicate therapy
       for (const cls of A.classes) {
         if (DUPLICATE_WATCH.has(cls) && B.classes.has(cls) && A.generic !== B.generic) {

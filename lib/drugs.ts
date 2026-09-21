@@ -11,6 +11,8 @@ export interface DrugInfo {
   timing?: "morning" | "evening" | "bedtime";
   food?: "with" | "empty";
   foodNote?: string;
+  /** active ingredients for combination products, e.g. Percocet → [oxycodone, acetaminophen] */
+  contains?: string[];
 }
 
 export const DRUGS: DrugInfo[] = [
@@ -39,8 +41,12 @@ export const DRUGS: DrugInfo[] = [
   { generic: "fluoxetine", classes: ["ssri"], aliases: ["prozac"], purpose: "an SSRI for depression and related conditions." },
   { generic: "citalopram", classes: ["ssri", "qt"], aliases: ["celexa"], purpose: "an SSRI for depression; can affect heart rhythm at higher doses." },
   { generic: "tramadol", classes: ["opioid", "serotonergic"], aliases: ["ultram"], purpose: "a pain reliever with opioid and serotonin effects." },
-  { generic: "oxycodone", classes: ["opioid"], aliases: ["oxycontin", "percocet", "roxicodone"], purpose: "an opioid for moderate-to-severe pain." },
-  { generic: "hydrocodone", classes: ["opioid"], aliases: ["vicodin", "norco"], purpose: "an opioid for pain, usually combined with acetaminophen." },
+  { generic: "oxycodone", classes: ["opioid"], aliases: ["oxycontin", "roxicodone"], purpose: "an opioid for moderate-to-severe pain." },
+  { generic: "oxycodone/acetaminophen", classes: ["opioid", "analgesic"], aliases: ["percocet", "endocet"], contains: ["oxycodone", "acetaminophen"], purpose: "an opioid combination for moderate-to-severe pain — it already contains acetaminophen (Tylenol)." },
+  { generic: "hydrocodone", classes: ["opioid"], aliases: ["hysingla", "zohydro"], purpose: "an opioid for pain." },
+  { generic: "hydrocodone/acetaminophen", classes: ["opioid", "analgesic"], aliases: ["vicodin", "norco", "lortab"], contains: ["hydrocodone", "acetaminophen"], purpose: "an opioid combination for pain — it already contains acetaminophen (Tylenol)." },
+  { generic: "acetaminophen/caffeine/aspirin", classes: ["analgesic", "nsaid"], aliases: ["excedrin", "excedrin migraine"], contains: ["acetaminophen", "aspirin"], purpose: "a combination pain reliever — it already contains acetaminophen AND aspirin." },
+  { generic: "acetaminophen/diphenhydramine", classes: ["analgesic", "sedative", "antihistamine"], aliases: ["tylenol pm"], contains: ["acetaminophen", "diphenhydramine"], purpose: "a nighttime pain reliever — it already contains acetaminophen and a sedating antihistamine." },
   { generic: "alprazolam", classes: ["benzodiazepine"], aliases: ["xanax"], purpose: "a benzodiazepine for anxiety — fast but habit-forming." },
   { generic: "lorazepam", classes: ["benzodiazepine"], aliases: ["ativan"], purpose: "a benzodiazepine for anxiety and sleep." },
   { generic: "diazepam", classes: ["benzodiazepine"], aliases: ["valium"], purpose: "a benzodiazepine for anxiety, muscle spasm, and seizures." },

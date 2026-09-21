@@ -78,6 +78,28 @@ export function buildSchedule(meds: MedInput[]): ScheduleEntry[] {
   return meds.map((m) => ({ ...sigToSlots(m.sig, m.generic), medId: m.id }));
 }
 
+/* Rough days-supply estimate from label quantity ÷ doses per day. */
+export function estimateSupply(med: MedInput): {
+  daysSupply?: number;
+  refillBy?: string;
+  note?: string;
+} {
+  const q = parseFloat(med.quantity ?? "");
+  if (!q || !Number.isFinite(q)) return {};
+  const entry = sigToSlots(med.sig, med.generic);
+  if (entry.slots.includes("as_needed"))
+    return { note: "as-needed — supply depends on usage" };
+  const perDay = entry.slots.length || 1;
+  const daysSupply = Math.floor(q / perDay);
+  if (daysSupply <= 0) return {};
+  const d = new Date();
+  d.setDate(d.getDate() + daysSupply);
+  return {
+    daysSupply,
+    refillBy: d.toISOString().slice(0, 10),
+  };
+}
+
 export const SLOT_LABELS: Record<Slot, string> = {
   morning: "Morning",
   noon: "Noon",

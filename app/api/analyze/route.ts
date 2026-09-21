@@ -1,6 +1,6 @@
 import { checkInteractions } from "@/lib/interactions";
 import { explainMeds } from "@/lib/llm";
-import { buildSchedule } from "@/lib/schedule";
+import { buildSchedule, estimateSupply } from "@/lib/schedule";
 import type { Analysis, MedInput } from "@/lib/schema";
 
 export const runtime = "nodejs";
@@ -25,6 +25,7 @@ export async function POST(req: Request) {
       interactions,
       schedule,
       explanations,
+      refills: meds.map((m) => ({ medId: m.id, ...estimateSupply(m) })),
       pharmacistQuestions,
       source,
     };

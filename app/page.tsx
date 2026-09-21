@@ -6,7 +6,10 @@ import MedListEditor from "@/components/MedListEditor";
 import InteractionAlerts from "@/components/InteractionAlerts";
 import ScheduleGrid from "@/components/ScheduleGrid";
 import WalletCard from "@/components/WalletCard";
+import TodayChecklist from "@/components/TodayChecklist";
 import { LANGS } from "@/lib/i18n";
+import { downloadIcs } from "@/lib/ics";
+import { speak, stopSpeaking } from "@/lib/speech";
 import { clearMeds, loadMeds, saveMeds } from "@/lib/store";
 import type { Analysis, MedInput, ScannedMed } from "@/lib/schema";
 import { SAMPLE_LABELS, SAMPLES } from "@/lib/samples";
@@ -25,6 +28,8 @@ export default function Home() {
   const [meds, setMeds] = useState<ScannedMed[]>([]);
   const [scanSource, setScanSource] = useState<"ai" | "offline">("offline");
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [savedList] = useState<MedInput[]>(() =>
     typeof window === "undefined" ? [] : loadMeds(),
   );
@@ -104,6 +109,7 @@ export default function Home() {
           generic: m.generic,
           strength: m.strength,
           sig: m.sig,
+          quantity: m.quantity,
           image: m.image,
           confidence: m.confidence,
         }));
@@ -341,8 +347,35 @@ export default function Home() {
   if (phase === "results" && analysis) {
     const inputs: MedInput[] = meds
       .filter((m) => m.generic.trim())
-      .map((m) => ({ id: m.id, generic: m.generic, strength: m.strength, sig: m.sig, image: m.image }));
+      .map((m) => ({ id: m.id, generic: m.generic, strength: m.strength, sig: m.sig, quantity: m.quantity, image: m.image }));
     const explainFor = (id: string) => analysis.explanations.find((e) => e.medId === id);
+    const refillFor = (id: string) => analysis.refills.find((r) => r.medId === id);
+
+    const copyForCaregiver = () => {
+      const lines = [
+        "MY MEDICATION LIST (from DoseWise)",
+        "",
+        ...inputs.map((m) => {
+          const sched = analysis.schedule.find((s) => s.medId === m.id);
+          const when = sched?.slots.map((s) => s.replace("_", " ")).join(", ") ?? "";
+          return `• ${m.generic}${m.strength ? ` ${m.strength}` : ""} — ${when}${m.sig ? ` (${m.sig})` : ""}`;
+        }),
+        "",
+        ...(analysis.interactions.length
+          ? [
+              "INTERACTION WARNINGS:",
+              ...analysis.interactions.map(
+                (i) => `• [${i.severity.toUpperCase()}] ${i.a} × ${i.b}: ${i.title}. ${i.advice}`,
+              ),
+            ]
+          : ["No known interactions in this list."]),
+        "",
+        DISCLAIMER,
+      ];
+      navigator.clipboard.writeText(lines.join("\n"));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    };
 
     return shell(
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6">
@@ -363,14 +396,45 @@ export default function Home() {
           </button>
         </div>
 
+        {/* action row — reminders, sharing, print. No accounts, no servers. */}
+        <div className="mb-6 flex flex-wrap gap-2">
+          <button
+            onClick={() => downloadIcs(inputs, analysis.schedule)}
+            className="rounded-lg bg-teal-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-teal-700"
+            title="daily dose reminders — imports into Google/Apple/Outlook"
+          >
+            📅 Add reminders to calendar
+          </button>
+          <button
+            onClick={copyForCaregiver}
+            className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+            title="copies a plain-text list — paste into WhatsApp/SMS to family"
+          >
+            {copied ? "✓ copied!" : "📤 Copy for family/caregiver"}
+          </button>
+          <button
+            onClick={() => window.print()}
+            className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+          >
+            🖨 Print wallet card
+          </button>
+          <span className="ml-auto self-center text-[11px] text-zinc-400">
+            🔒 no account · no server storage · works offline
+          </span>
+        </div>
+
         <div className="flex flex-col gap-10">
           <InteractionAlerts interactions={analysis.interactions} />
+
+          <TodayChecklist meds={inputs} schedule={analysis.schedule} />
 
           <section>
             <h2 className="mb-3 text-lg font-bold text-zinc-900">💊 What each one is for</h2>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {inputs.map((m) => {
                 const ex = explainFor(m.id);
+                const refill = refillFor(m.id);
+                const speaking = speakingId === m.id;
                 return (
                   <div key={m.id} className="rounded-xl border border-zinc-200 bg-white p-4">
                     <div className="mb-1 flex items-center gap-2">
@@ -378,10 +442,40 @@ export default function Home() {
                       {m.strength && (
                         <span className="text-xs text-zinc-500">{m.strength}</span>
                       )}
+                      <button
+                        onClick={() => {
+                          if (speaking) {
+                            stopSpeaking();
+                            setSpeakingId(null);
+                          } else if (ex?.purpose && speak(`${m.generic}. ${ex.purpose}`, lang, () => setSpeakingId(null))) {
+                            setSpeakingId(m.id);
+                          }
+                        }}
+                        title="read aloud"
+                        className={`ml-auto rounded-full px-2 py-0.5 text-xs transition ${
+                          speaking ? "animate-pulse bg-teal-100" : "text-zinc-400 hover:bg-zinc-100"
+                        }`}
+                      >
+                        🔊
+                      </button>
                     </div>
                     <p className="text-sm leading-relaxed text-zinc-700">{ex?.purpose ?? "—"}</p>
                     {ex?.tips && (
                       <p className="mt-2 text-xs text-amber-700">💡 {ex.tips}</p>
+                    )}
+                    {refill?.refillBy && (
+                      <p
+                        className={`mt-2 inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                          refill.daysSupply! <= 7
+                            ? "bg-rose-50 text-rose-700"
+                            : "bg-zinc-100 text-zinc-600"
+                        }`}
+                      >
+                        📦 ~{refill.daysSupply} days left — refill by {refill.refillBy}
+                      </p>
+                    )}
+                    {refill?.note && (
+                      <p className="mt-2 text-[11px] text-zinc-400">📦 {refill.note}</p>
                     )}
                     {m.sig && (
                       <p className="mt-2 border-t border-zinc-100 pt-2 text-[11px] italic text-zinc-400">
@@ -411,15 +505,7 @@ export default function Home() {
           </section>
 
           <section>
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-lg font-bold text-zinc-900">🪪 Wallet card</h2>
-              <button
-                onClick={() => window.print()}
-                className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
-              >
-                🖨 print
-              </button>
-            </div>
+            <h2 className="mb-3 text-lg font-bold text-zinc-900">🪪 Wallet card</h2>
             <WalletCard meds={inputs} schedule={analysis.schedule} />
           </section>
 

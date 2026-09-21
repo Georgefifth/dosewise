@@ -45,10 +45,18 @@ export interface MedExplanation {
   tips?: string;
 }
 
+export interface RefillInfo {
+  medId: string;
+  daysSupply?: number;
+  refillBy?: string; // ISO date
+  note?: string;
+}
+
 export interface Analysis {
   interactions: Interaction[];
   schedule: ScheduleEntry[];
   explanations: MedExplanation[];
+  refills: RefillInfo[];
   pharmacistQuestions: string[];
   source: "ai" | "offline";
 }
@@ -58,6 +66,7 @@ export interface MedInput {
   generic: string;
   strength?: string;
   sig?: string;
+  quantity?: string;
   image?: number;
   confidence?: string;
 }

@@ -62,6 +62,7 @@ Photograph your medication labels → a vision model reads each label → DoseWi
 
 ## Status / TODO
 
-- [x] Theme pivoted to DoseWise; VL endpoint verified (label → clean JSON)
-- [ ] Rebuild app (scan → confirm → results), sample labels, README
+- [x] MVP verified end-to-end: sample pillbox scan → 4 meds read (high conf) → warfarin×ibuprofen MAJOR + NSAID×ACE moderate detected → schedule + explanations + questions
+- [x] lint/build clean, committed
 - [ ] Deploy live demo + ≤5min video + Devpost submission
+- Stretch: barcode/NDC scan, caregiver share link, refill reminders

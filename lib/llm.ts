@@ -266,7 +266,7 @@ Every medId must appear exactly once.`;
   const raw = await chat(TEXT_MODELS(), [
     { role: "system", content: system },
     { role: "user", content: user },
-  ]);
+  ], { timeoutMs: 60_000 });
   const parsed = raw ? (extractJson(raw) as Record<string, unknown> | null) : null;
 
   if (!parsed || !Array.isArray(parsed.explanations)) return { ...fallback, source: "offline" };
