@@ -65,5 +65,8 @@ Photograph your medication labels → a vision model reads each label → DoseWi
 - [x] MVP verified end-to-end: sample pillbox scan → 4 meds read (high conf) → warfarin×ibuprofen MAJOR + NSAID×ACE moderate detected → schedule + explanations + questions
 - [x] Competitive pass vs Medisafe/MyTherapy/Apple Health/Drugs.com: added ingredient-level dup detection (Norco+Tylenol verified), .ics calendar reminders, today-checklist+streak, refill countdowns, caregiver copy, TTS read-aloud, privacy positioning
 - [x] lint/build clean, committed
-- [ ] Deploy live demo + ≤5min video + Devpost submission
+- [x] Deployed: https://georgefifth.github.io/dosewise/ (static export via Actions; BYOK popover for live VL, offline canned path otherwise)
+- [x] Playwright e2e: `pnpm tsx scripts/e2e.ts` — 24 checks, runs against dev server AND static build
+- [x] Demo video: `demo/demo.mp4` (75s narrated) via ~/tools/demo-recorder, scenes at `~/tools/demo-recorder/scenes/dosewise.js`
+- [ ] Devpost submission (needs: video link — upload demo.mp4 to YouTube, screenshots in `demo/`)
 - Stretch: barcode/NDC scan (openFDA), med image thumbnails on wallet card
