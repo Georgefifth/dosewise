@@ -1,36 +1,94 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FormPilot — Paperwork, translated
 
-## Getting Started
+**Upload any fillable PDF form. FormPilot turns every cryptic field into a plain-language question — in your language — then writes your answers into the real document.**
 
-First, run the development server:
+Built for **InfinityX Global Hackathon 2K26**.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## The problem
+
+Every year, **$140B+** in U.S. benefits go unclaimed. Millions of applications — for food assistance, healthcare, housing, immigration — are abandoned or rejected not because people are ineligible, but because the *form itself* is the barrier: cryptic field names (`gross_mth_inc_amt`), bureaucratic jargon, and instructions written at a college reading level. The burden falls hardest on immigrants, seniors, and the ~1 in 5 adults who struggle with forms.
+
+## What FormPilot does
+
+| Step | What happens |
+| --- | --- |
+| **Upload** | Drop any fillable PDF (AcroForm) — or pick a bundled sample. |
+| **Decode** | Server extracts every real form field with its exact position on the page; the AI layer rewrites each as a plain-language question *in the language you choose*. |
+| **Interview** | One friendly question at a time — with the actual field highlighted live on the document. Every field carries a "why is this asked?" explanation. |
+| **Fill** | Answers are written into the real PDF (text, checkboxes, radio groups, dropdowns) and downloaded, plus a plain-language summary of what you just submitted. |
+
+### Highlights
+
+- **Field-level grounding** — the widget being asked about lights up on the PDF as you go. Click any field to jump to its question.
+- **Multilingual interview** — the form stays in its original language; the conversation happens in yours (EN/ES/ZH/HI/FR/AR, more via the LLM).
+- **Answer vault** — semantic answers (name, DOB, address…) are remembered *locally* and pre-fill the next form. Nothing leaves the device.
+- **Document checklist** — tells you what to gather (ID, pay stubs, insurance card) before you start.
+- **Voice input** — Web Speech API dictation on text fields.
+- **Offline-resilient AI** — any OpenAI-compatible endpoint; a deterministic fallback planner keeps the full experience working with zero keys, so the demo never breaks.
+- **Accessibility** — large-text mode, keyboard-first flow, one-question-at-a-time cognitive load.
+
+## Tech stack
+
+- **Next.js 16** (App Router, Turbopack) + TypeScript + Tailwind CSS v4
+- **pdf-lib** — AcroForm extraction, widget rect mapping, real PDF filling (incl. Unicode font embedding for non-Latin answers)
+- **pdfjs-dist** — in-browser document rendering with overlay highlights
+- **LLM**: any OpenAI-compatible endpoint (`LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`; developed against Featherless `Qwen/Qwen3-32B` with a DeepSeek fallback). Handles cold starts, `capacity_exhausted` retries, `<think>` stripping, and graceful degradation to the offline planner.
+
+## Architecture
+
+```
+app/
+  page.tsx            # phase orchestrator: landing → interview → review → done
+  api/extract/        # POST file|sample → ExtractedForm (fields + widget rects)
+  api/plan/           # POST {form, lang} → InterviewPlan (LLM or offline)
+  api/fill/           # POST file|sample + answers → filled PDF bytes
+  api/summary/        # POST {form, answers, lang} → markdown summary
+lib/
+  pdf.ts              # AcroForm walk: fields, widget rects→pages, fill w/ font fallback
+  llm.ts              # provider layer: retries, model fallback, think-strip, mock
+  i18n.ts             # language strings, semantic field dictionary
+  samples.ts          # bundled sample loader (fs → http fallback)
+  schema.ts           # shared types
+components/
+  PdfViewer.tsx       # pdfjs canvas + per-widget highlight overlays
+  Interview.tsx       # guided Q&A, voice input, vault chips
+  FieldReview.tsx     # editable answer table
+  MarkdownLite.tsx    # zero-dep markdown renderer
+scripts/
+  make-samples.ts     # regenerates the 3 bundled AcroForm PDFs
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Quickstart
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+pnpm install
+pnpm dev          # http://localhost:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+No keys needed — the offline planner handles everything. To enable a real LLM:
 
-## Learn More
+```bash
+cp .env.example .env.local   # fill in LLM_BASE_URL / LLM_API_KEY / LLM_MODEL
+```
 
-To learn more about Next.js, take a look at the following resources:
+Regenerate sample PDFs: `pnpm tsx scripts/make-samples.ts`
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Demo script (5 min)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. **Landing** — pick *Form SB-10 · Benefits Application* (or drop your own PDF).
+2. Set language to **中文** or **Español** — watch bureaucratic field names become warm questions.
+3. Answer 2–3 questions — note the **field lighting up on the PDF** each time; click "ⓘ why is this asked?" on the SSN field.
+4. Click a field **on the document** — the interview jumps to it.
+5. **Review** screen → *Fill the PDF & finish* → download opens with every answer inside the real form (accented characters included).
+6. Start a second form → your name/address are **already remembered** from the vault.
 
-## Deploy on Vercel
+## Privacy
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+PDF bytes live only in request scope; nothing is persisted server-side. The answer vault is `localStorage` — on-device only.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Roadmap
+
+- Flat scans → field detection via vision model (non-AcroForm PDFs)
+- Signature pad + drawn-signature embedding
+- Multi-form packets (the same answers across an agency's whole packet)
+- DOCX/XFA support
